@@ -25,10 +25,14 @@ namespace combaddoptimize {
 // Retrieve the range of a value `v` and store it in `range`. Returns failure
 // This uses the `DataFlowSolver` to find the range of the value.
 // Compare: llvm/mlir/lib/Dialect/Arith/Transforms/IntRangeOptimizations.cpp
-// TODO: Implement this function
 static std::optional<ConstantIntRanges> retrieveRange(DataFlowSolver &solver,
                                                       Value value) {
-  // TODO: Use the solver to get the value if it is not uninitialized
+  auto *maybeInferredRange =
+      solver.lookupState<IntegerValueRangeLattice>(value);
+  if (!maybeInferredRange || maybeInferredRange->getValue().isUninitialized())
+    return std::nullopt;
+  const ConstantIntRanges &inferredRange =
+      maybeInferredRange->getValue().getValue();
 
   // Return the range
   return inferredRange;
@@ -42,31 +46,50 @@ struct AddOpPattern : public OpRewritePattern<AddOp> {
 
   LogicalResult matchAndRewrite(AddOp op,
                                 PatternRewriter &rewriter) const override {
-    // TODO: Only work for `AddOp` with two inputs and one result
-
+    if (op->getNumOperands() != 2 || op->getNumResults() != 1)
+      return rewriter.notifyMatchFailure(op,
+                                         "Expected 2 operands and 1 result");
     Location loc = op.getLoc();
     auto opWidth = op.getType().getIntOrFloatBitWidth();
 
-    // TODO: Get the range for each value in the operation
+    auto rangeOp0 = retrieveRange(solver, op.getOperand(0));
+    auto rangeOp1 = retrieveRange(solver, op.getOperand(1));
+    auto rangeRes = retrieveRange(solver, op.getResult());
+    if (!rangeOp0 || !rangeOp1 || !rangeRes)
+      return rewriter.notifyMatchFailure(op,
+                                         "no ranges for operands or result");
 
-    // TODO: Get the number of bits which are not needed
+    auto removeWidth = rangeRes.value().umax().countLeadingZeros();
+    removeWidth =
+        std::min(removeWidth, rangeOp0.value().umax().countLeadingZeros());
+    removeWidth =
+        std::min(removeWidth, rangeOp1.value().umax().countLeadingZeros());
 
-    // TODO: Only work for the case that we can reduce the width and that we do
     // not remove the complete operation
+    if (removeWidth == 0)
+      return rewriter.notifyMatchFailure(op, "no bits to remove");
+    if (removeWidth == opWidth)
+      return rewriter.notifyMatchFailure(
+          op, "all bits to remove - replace by zero");
 
     auto newWidth = opWidth - removeWidth;
-    // TODO: We want to replace the current AddOp with a series of other
-    // operations, all with the aim to have a new AddOp with a smaller width.
-    // The return value should stay the same.
-    // Operations to be used:
-    //   - ExtractOp
-    //   - AddOp
-    //   - ConstantOp
-    //   - ConcatOp
 
     Value lhs = op.getOperand(0);
+    Value rhs = op.getOperand(1);
 
-    // TODO: Fill in here
+    // Create a replacement type for the extracted bits
+    auto replaceType = rewriter.getIntegerType(newWidth);
+
+    // Extract the lsbs from each operand
+    auto extractLhsOp = ExtractOp::create(rewriter, loc, replaceType, lhs, 0);
+    auto extractRhsOp = ExtractOp::create(rewriter, loc, replaceType, rhs, 0);
+    auto narrowOp = AddOp::create(rewriter, loc, extractLhsOp, extractRhsOp);
+
+    // Concatenate zeros to match the original operator width
+    auto zero =
+        hw::ConstantOp::create(rewriter, loc, APInt::getZero(removeWidth));
+    auto replaceOp = ConcatOp::create(rewriter, loc, op.getType(),
+                                      ValueRange{zero, narrowOp});
 
     rewriter.replaceOp(op, replaceOp);
 
