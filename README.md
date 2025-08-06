@@ -144,7 +144,42 @@ cd ..
 
 ## Part 2: Chisel generator
 
-The previous pass only makes sense if we have a lot of addition, which we can
+The previous pass only makes sense if we have a lot of additions, which we can
 not all check by hand.
 We are now using Chisel, a hardware construction language, to create a larger
 test case for our pass.
+
+### Chisel flow
+
+To understand the flow, we can test this with [`example-add-gen/add-simple.scala`](example-add-gen/add-simple.scala).
+
+```sh
+cd example-add-gen
+scala-cli add-simple.scala
+```
+
+This will create a file `AddSimple.mlir` with a MLIR representation of the
+design.
+We now need to lower this from the FIRRTL representation to the core dialects:
+
+```sh
+../../circt/build/bin/circt-opt --firrtl-lower-layers --lower-firrtl-to-hw AddSimple.mlir > AddSimple-lowered.mlir
+```
+
+And then we can use `circt-opt` again to run our custom pass:
+
+```sh
+../../circt/build/bin/circt-opt -load-pass-plugin=../build/CombAddOptimize.so -pass-pipeline='builtin.module(reduce-comb-add-width)' AddSimple-lowered.mlir > AddSimple-optimized.mlir
+```
+
+### Chisel example
+
+We now expand the example
+[`example-add-gen/uneven-addition.scala`](example-add-gen/uneven-addition.scala)
+by summing up the inputs and then reduce all intermediate values until we only
+have one final result.
+You can be creative here and try to include as many unbalanced additions as you
+want.
+
+Adapt the flow to create the hardware design in MLIR, lower it, and then call
+our custom pass. Compare the IR before our pass and after.
