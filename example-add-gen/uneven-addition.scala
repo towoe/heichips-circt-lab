@@ -17,11 +17,17 @@ class UnevenAddition(val n: Int) extends Module {
     val out = Output(UInt((12 + log2Ceil(n)).W)) // 8+4 bits + possible carry
   })
 
-  // TODO: Add inputs together with `+&`
-  val products =
+  val products = (0 until n).map(i => io.a(i) +& io.b(i) +& io.c(i))
 
-  // TODO: Add intermediate results in a tree structure to one final value
+  // Add using a tree
   def reduceTree(xs: Seq[UInt]): UInt = xs match {
+    case Seq(x) => x
+    case _ =>
+      val pairs = xs.grouped(2).map {
+        case Seq(x, y) => x +& y
+        case Seq(x)    => x
+      }.toSeq
+      reduceTree(pairs)
   }
 
   io.out := reduceTree(products)
