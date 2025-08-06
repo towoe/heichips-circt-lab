@@ -34,24 +34,8 @@ cmake -G Ninja .. \
     -DCIRCT_SLANG_FRONTEND_ENABLED=ON
 ninja
 ```
+
 ## Part 1: Pass plugin
-
-### Build
-
-Build the pass as a shared library:
-
-```sh
-mkdir build && cd build
-cmake -G Ninja -DCMAKE_BUILD_TYPE=Release ..
-ninja
-cd ..
-```
-
-### Run `circt-opt` with custom pass
-
-```sh
-../circt/build/bin/circt-opt -load-pass-plugin=build/CombAddOptimize.so -pass-pipeline='builtin.module(reduce-comb-add-width)' test/basic.mlir
-```
 
 ### Exercise
 
@@ -73,15 +57,90 @@ assign ab = a + b;    \\ ab range: 0 - 10 (7+3)
 assign abc = ab + c;  \\ abc range: 0 - 13 (10+3)
 ```
 
-We are writing our own pass plugin, which will optimize the size of the last
-addition.
-The code for this is in `CombAddOptimize.cpp`.
+The IR describing this behaviour can be found in [`test/basic.mlir`](test/basic.mlir).
+For an overview, here is the graphical representation of the operations:
 
+```mermaid
+graph TD;
+subgraph subG0["Legend"]
+  variable[variable]
+  constop[[constant op]]
+  concatop[/concat op\]
+  addop{{add op}}
+end
+
+  A[a: bit width=3]
+  B[b: bit width=2]
+  C[c: bit width=2]
+  c1[[0: bit width=1]]
+  c2[[00: bit width=2]]
+  c3[[000: bit width=3]]
+
+  c1-->Ae[/a: bit width=4\]
+  A-->Ae
+
+  c2-->Be[/b: bit width=4\]
+  B-->Be
+
+  Ae-->ab{{ab = a+b : bit width=4}}
+  Be-->ab
+
+  c1-->abe[/ab: bit width=5\]
+  ab-->abe
+
+  c3---->ce[/c: bit width=5\]
+  C---->ce
+
+  abe-->abc{{abc = ab+c : bit width=5}}
+  ce-->abc
+
+  abc-->Q[q: bit width=5]
+
+  variable~~~constop~~~concatop~~~addop
+
+  style subG0 fill:#FFFAC0
+  style abc stroke:#D50000
+  style abc fill:#e68787
+```
+
+We are writing our own pass, which will optimize the size of addition operations.
+The code for this is in [`CombAddOptimize.cpp`](CombAddOptimize.cpp).
+The pass will need to check the range of the input signals, and if it finds an
+addition which uses more bits than needed to represent the current range, it
+will replace the operation with a new operation.
+For this the input and output signals have to be adjusted to conform to the new
+width requirements.
+In the example, the operation with the red color is the one which will be
+optimized.
+
+__Pass definition__
 The pass is defined in `include/CombAddOptimize/CombAddOptimize.td`.
 This is a tablegen file, which is used in LLVM to serve as a code generator
 framework. By defining our pass in this format, tablegen will create the
 boilerplate code for us. This can be found in the directory
 `build/include/CombAddOptimize/`, after the build was started.
+
+__Plugin__
+We are writing the pass in a out-of-tree fashion. This means we can run the
+upstream CIRCT tool, in our case `circt-opt`, unmodified, and tell it to load
+and start our pass dynamically: `-load-pass-plugin="path/to/"CombAddOptimize.so -pass-pipeline='builtin.module(reduce-comb-add-width)'`.
+
+### Build
+
+Build the pass as a shared library:
+
+```sh
+mkdir build && cd build
+cmake -G Ninja -DCMAKE_BUILD_TYPE=Release ..
+ninja
+cd ..
+```
+
+### Run `circt-opt` with custom pass
+
+```sh
+../circt/build/bin/circt-opt -load-pass-plugin=build/CombAddOptimize.so -pass-pipeline='builtin.module(reduce-comb-add-width)' test/basic.mlir
+```
 
 ## Part 2: Chisel generator
 
